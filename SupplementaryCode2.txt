@@ -1,0 +1,583 @@
+# R code for producing the null models and Fig. 3 in: 
+# Jandt, U., Bruelheide, H., Jansen, J., Bonn, A., Grescho, V., Klenke, R., 
+# Sabatini, F.M., Bernhardt-Römermann, M., Blüml, V., Dengler, J., 
+# Diekmann, M., Dörfler, I., Döring, U., Dullinger, S., 
+# Haider, S., Heinken, T., Horchler, P., Kuhn, G., Lindner, M., Metze, K., 
+# Müller, N., Naaf, T., Peppler- Lisbach, C., Poschlod, P., Roscher, C., 
+# Rosenthal, G., Rumpf, S., Schmidt, W., Schrautzer, W., Schwabe, A., 
+# Schwartze, P., Sperle, T., Stanik, N., Storm, C., Voigt, W., Wegener, U., 
+# Wesche, K., Wittig, B., Wulf, M. (2022): Plant diversity change over 
+# one century in Germany: more losers than winners. 
+# Nature 
+#
+# Author: Helge Bruelheide, 26.02.2022
+library(tidyverse)  # for using dplyr and piping
+library(DescTools)  # Gini coefficient
+library(data.table) # for aggregating data
+library(reshape2)   # for casting matrices
+library(ggplot2)    # for graphics
+library(sads)       # for broken stick distribution
+
+# General remark: Loops are used instead of apply functions to 
+# allow for repeatability of drawing random numbers, using the 
+# set.seed() function
+
+# Step 1: Create a pool of 200 species with frequencies randomly 
+# drawn from a log-normal distribution, using the rlnorm function in R 
+# (meanlog = 1.5, sdlog = 1.2). 
+set.seed(100)
+# using a random seed
+spec.pool <- rlnorm(200, meanlog = 1.5, sdlog = 1.2)
+spec.pool <- ceiling(spec.pool)
+# Rounding the numeric values to integer
+max(spec.pool) #100
+# this defines the maximum number of communities to which the species
+# can be assigned in Step 2.
+sum(spec.pool) #1810
+# this gives the total number of occurrences, which are assigned to 
+# the communities in Step 2.
+spec.pool <- data.frame(species=seq(1,200), freq=spec.pool)
+# species is the ID for species, which for the sake of simplicity
+# are integer numbers from 1 to 200.
+
+# Step 2: Create 100 random communities 
+# with a variation in species richness
+# that more or less corresponded to the empirical data
+# in ResurveyGermany, which was mean=23.4 and sd=13.7
+# by applying try and error, using a seed of 74 and 
+# drawing richness from a normal distribution with 
+# mean = 19 and sd = 9 of a standard deviation
+# was found to result finally in the same amount of occurrences 
+# as those from spec.pool (i.e. 1810)
+set.seed(74)
+comm.richness <- data.frame(no=seq(1,100),richness=round(rnorm(100, mean=19.13, sd=9),0))
+sum(comm.richness$richness) #1810
+
+# now create 100 random communities with the richness levels obtained above
+# and NA for species and cover
+comm.long <- data.frame(no=NULL, cover=NULL)
+for(i in 1:100){
+  comm.long <- rbind(comm.long,data.frame(no=comm.richness$no[i], 
+                          cover=rep(NA,comm.richness$richness[i]),
+                          species=rep(NA,comm.richness$richness[i])))
+}
+str(comm.long) #1810 obs. of  3 variables
+
+comm.richness2 <- comm.richness
+# will be reduced in the loop below
+
+# sort the species pool in decreasing frequency 
+sequence <- spec.pool$species[order(spec.pool$freq, decreasing=T)]
+# now assign species from spec.pool to the community (comm.long)
+for(i in 1:200){
+  # go from the species with highest frequency to that with lowest frequency
+  j <- sequence[i]
+  set.seed(j+100)
+  x <- sample(comm.richness2$no, spec.pool$freq[j], 
+              prob=comm.richness2$no/sum(comm.richness2$no))
+  index1 <- match(x,comm.long$no[is.na(comm.long$species)])
+  comm.long$species[is.na(comm.long$species)][index1] <- j
+  index2 <- match(x, comm.richness2$no)
+  comm.richness2$richness[index2] <- comm.richness2$richness[index2] - 1 
+  comm.richness2 <- comm.richness2[comm.richness2$richness!=0,]
+  
+}
+sort(table(comm.long$species))
+# species frequencies are between 1 and 100, corresponging to spec.pool
+identical(as.numeric(sort(table(comm.long$species))), sort(spec.pool$freq))
+# T, i.e. species frequencies in the communities match with those
+# derived from the log-normal distribution
+sum(table(comm.long$species))
+# 1810 = total number of occurrences across all communities
+
+# Now assign cover values to the species according to a broken stick model
+# this is done with drbs, which gives the (log) density of 
+# MacArthur's Broken-stick distribution
+# The number of broken stick fragments corresponds to the species richness
+# in the community. All cover values per community sum up to 1.
+for(i in 1:100){
+  # assign cover by community
+  set.seed(200+i)
+  comm.long$cover[comm.long$no==i] <- sample(drbs(x=seq(1,
+                        length(comm.long$species[comm.long$no==i])), N=100, 
+                             S=length(comm.long$species[comm.long$no==i])))
+}
+table(comm.long %>% group_by(no) %>%
+    summarise(x=sum(cover)))
+## all are 1!
+
+# Turn the long format into a matrix
+comm <- reshape2::acast(comm.long, no~species, value.var = "cover")
+str(comm)
+# examine the distribution of cover values across communities
+hist(as.numeric(comm))
+# examine the distribution of frequencies across species
+hist(table(comm.long$species))
+
+# Trun the long format into a tibble
+comm.long <- as_tibble(comm.long)
+spec.pool <- as_tibble(spec.pool)
+comm.richness <- as_tibble(comm.richness)
+
+
+# Step 3: Introduce random change according to three scenarios 
+# In all scenarios species richness was kept constant. Species turnover 
+# was introduced by randomly introduced decreases. Species with cover 
+# values <0 go extinct and are replaced by newly colonising species.
+# New species to a community are  randomly selected from the pool of 
+# 200 species, weighting probabilities to be drawn by the species' frequency. 
+# Species decreases in cover were introduced by varying three parameters, 
+# which corresponds to three different scenarios, according to these 
+# these parameters: 
+# Scenario 1: Varying the proportion of species affected by cover change 
+# in a community (to simulate different turnover in community composition)
+prop.change <- 0.4
+# (Fig. 3a and b were created with prop.change = 0.4 and 0.8)
+
+# Scenario 2: Varying the proportion of increasing species among those 
+# species affected by change (to simulate differences in the distribution 
+# of losses and gains, irrespective of species)
+prop.increase <- 0.5
+# (Fig. 3a and b were created with prop.increase 0.5
+#  Fig. 3c and d were created with prop.increase = 0.2 and 0.8)
+
+# Scenario 3: Varying the identity of the species to decrease in cover 
+# (to simulate that losses and gains might be concentrated in certain species)
+decrease_selection_weighted <- 0
+# (Fig. 3a, b, c and d were created with decrease_selection_weighted = 0, 
+#  i.e. no weight,
+#  Fig. 3e and f were created with decrease_selection_weighted = 1,
+#  i.e. letting species decrease according to the species ID, which 
+#  resulted in species with higher ID values being more 
+#  frequently selected for losing cover than other species.
+
+# Create a new tibble that will hold the communities that undergo 
+# cover changes
+comm.long2 <- as_tibble(data.frame(no=NULL, cover=NULL, species=NULL))
+# count number of decreasing and increasing species
+count.decrease <- 0
+count.increase <- 0
+
+for(i in 1:100){
+  # lopp to change plot by plot
+  # determine the number of species that undergo change
+  n.change <- nrow(comm.long[comm.long$no==i,]) * prop.change
+  # turn this into an even number to allow that half of the species
+  # can decrease and the other half increase
+  n.change <- round(n.change/2,0)*2
+  # make sure that n.change cannot exceed the number of species in that community
+  n.change <- ifelse(n.change <= nrow(comm.long[comm.long$no==i,]), n.change,
+                     nrow(comm.long[comm.long$no==i,]))
+  # make sure that n.change is at minimum = 1
+  n.change <- ifelse(n.change != 0, n.change,1)
+  
+  # select the species that undergo decrease
+  set.seed(i+1000)
+  if(decrease_selection_weighted==0){
+    # in scenario 1 and 2, species are selected randomly 
+    # x holds the species that undergo change
+    x <- comm.long %>% filter(no==i) %>%
+      slice_sample(n=n.change)
+  } else {
+    #  in scenario 3, species are selected by ID in descending sequence
+    x <- comm.long %>% filter(no==i) %>%
+      slice_min(order_by=desc(species),n=n.change)
+  }
+  
+  # from the species that undergo change select the species
+  # that undergo decrease, then the others undergo increase
+  # As the number has to be integer, a random variable 
+  # random_floor_ceiling (either =1 or =2) decides randomly 
+  # whether the floor or
+  # ceiling is taken from the decreasing species defined by 
+  # (1-prop.increase)
+  set.seed(i+2000)
+  random_floor_ceiling <- sample(seq(1,2),1)
+  if(random_floor_ceiling==1){
+    set.seed(i+2500)
+    if(decrease_selection_weighted==1){
+      # x.dec holds the decreasing species
+      x.dec <- x %>%
+        slice_min(order_by=desc(species),n=ceiling(nrow(.)*(1-prop.increase)))
+    } else {
+      x.dec <- x %>%
+        slice_sample(n=ceiling(nrow(.)*(1-prop.increase)))
+    }
+  } else {
+    set.seed(i+2500)
+    if(decrease_selection_weighted==1){
+      x.dec <- x %>%
+        slice_min(order_by=desc(species),n=floor(nrow(.)*(1-prop.increase)))
+    } else {
+      x.dec <- x %>%
+        slice_sample(n=floor(nrow(.)*(1-prop.increase)))
+    }
+    if(nrow(x.dec)==0){
+      set.seed(i+2600)
+      x.dec <- x %>%
+        slice_sample(n=1)
+    }
+  }
+  
+  # number of declinging species
+  no.species.dec <- nrow(x.dec)
+  # number of increasing species
+  no.species.inc <- nrow(x)- no.species.dec
+  if(decrease_selection_weighted==1){
+    # in scenario 3, also select the increasing species
+    # according to their ID
+    set.seed(i+2700)
+    x2 <- comm.long %>% filter(no==i) %>%
+      filter(!species %in% x.dec$species) %>%
+      slice_sample(n=no.species.inc)
+    x <- rbind(x.dec,x2)
+  }
+  # x.const holds the species that do not change
+  x.const <- comm.long %>% 
+    filter(no==i & !species %in% x$species)
+  # x.inc holds the species that increase
+  x.inc <- x %>%
+    filter(!species %in% x.dec$species)
+
+  # determine the sum of cover of all species that were selected to 
+  # decrease
+  decr <- sum(x.dec$cover)
+  if(length(x.dec$cover)>1){
+    # decreases are distributed according to a geometric model
+    # as a reasult decr holds decreases in descending values
+    decr <- decr/2^seq(1,length(x.dec$cover)-1,by=1)
+    decr <- c(decr,decr[length(decr)])
+  }
+  # decreases are substracted from the initial cover 
+  # by applying decreases to the species in the 
+  # sequence of decreasing cover
+  x.dec2 <- x.dec$cover[order(x.dec$cover, decreasing = T)]-decr
+  x.dec2[order(x.dec$cover, decreasing = T)] <- x.dec2
+  # if the new cover becomes negative, it is set to 0
+  x.dec2[x.dec2<0] <- 0
+
+  
+  # The number of species that went extinct 
+  no.species.ext <- length(x.dec2[x.dec2==0])
+
+  # Determine the cover change of all decreasing species
+  # in order to redistribute it among the increasing species
+  # and newly colonizing species
+  incr <- x.dec$cover - x.dec2
+  # randomly select newly colonizing species, taking the same number
+  # as those species that went extinct
+  set.seed(i+3000)
+  x.new <- spec.pool %>% 
+    filter(!species %in% comm.long$species[comm.long$no==i]) %>%
+    slice_sample(n=no.species.ext, weight_by = freq) %>% 
+    mutate(no=i, cover=0) %>%
+    dplyr::select(no, cover, species)
+  # Check if there are increasing species among the residents
+  if(no.species.inc < no.species.ext){
+    # then no further resident species should increase 
+    # and the cover is only distributed among thenewcoming species  
+    no.species.inc <- 0
+  } else {
+    # the number of increasing resident species is obtained from all
+    # increasing species minus the number of new colonizers 
+    no.species.inc <- no.species.inc-no.species.ext
+  }
+  # Make a copy of all increments, which will be distributed now among
+  # new colonizers and increasing residents
+  # If number of decreasing and increasing species is the same
+  # then increments are the same as decrements
+  incr2 <- incr
+  # If there is only one species that increases (increasing resident plus
+  # new colinizing species), then this species is assigned the sum of all increases 
+  if(no.species.inc+no.species.ext == 1){
+    incr2 <- sum(incr)
+  }
+  # If number of decreasing and increasing species is not the same and 
+  # if there is more than one increasing or colonizing spcies,
+  # the increments are redistributed
+  if(no.species.inc+no.species.ext != no.species.dec & no.species.inc+no.species.ext !=1){
+    # If the number of decreasing species is larger than that of increasing species
+    # the increments will be pairwise combined as a sum until the 
+    # number of increments number matches the number of increasing species 
+    if(no.species.dec > no.species.inc+no.species.ext){
+      for(k in 1:(no.species.dec-no.species.inc-no.species.ext)){
+        # Combine species randomly
+        set.seed(k+6000)
+        index3 <- sample(1:length(incr2),2)
+        incr2 <- c(incr2,sum(incr2[index3]))
+        incr2 <- incr2[-index3]
+      }
+    } else {
+      # If the number of decreasing species is smaller than that of increasing species
+      # the increments will be randomly divided by two and one of the halves
+      # will be assigned to another species
+      for(k in 1:(no.species.inc+no.species.ext-no.species.dec)){
+        # Devide the number of increments randomly until the
+        # number of increments number matches the number of increasing species 
+        set.seed(k+6000)
+        index3 <- sample(1:length(incr2),1)
+        incr2 <- c(incr2,incr2[index3]/2)
+        incr2[index3] <- incr2[index3]/2
+      }
+    }
+  }
+  # Now there are the same number of increments as there are increasing species.
+  # Then the increments are assigned randomly to increasing resident species
+  # and new colonizers
+  if(no.species.inc>0){
+    set.seed(i+4000)  
+    x.inc3 <- x.inc %>%
+      slice_sample(n=no.species.inc)
+  } else {
+    x.inc3 <- x.inc %>%
+      slice_sample(n=0)
+  }
+  set.seed(i+5000)
+  incr2 <- sample(incr2)
+  # Determine the species among the initially selected increasing species
+  # that will not change their cover
+  x.const2 <- x.inc %>% 
+    filter(!species %in% x.inc3$species)
+  # If there are resident species that increase 
+  # then the increments will be divided by increasing and new colonizers
+  set.seed(i+5000)
+  if(length(incr2)>no.species.ext){
+    index1 <- sample(seq(1:length(incr2)),length(incr2)-no.species.ext)
+    x.inc3$cover <- x.inc3$cover + incr2[index1]
+    x.new$cover <- incr2[!seq(1:length(incr2)) %in% index1]
+  } else {
+    # Otherwise, the increments will only assigned to the new colonizers
+    x.new$cover <- incr2
+  }
+  # assign new cover values
+  x.dec$cover <- x.dec2
+  # delete extinct species
+  x.dec <- x.dec[x.dec$cover!=0,]
+  # collate new rows  
+  comm.long2 <- rbind(comm.long2, x.const, x.const2, x.dec, x.inc3, x.new)
+  # count number of decreasing and increasing species
+  count.decrease <- count.decrease+nrow(x.dec)+nrow(x.new)
+  count.increase <- count.increase+nrow(x.inc3)+nrow(x.new)
+}
+sum(comm.long2$cover) # 100
+count.decrease #364
+count.increase #364
+
+str(comm.long2) #[1,810 x 3]
+
+# combine the initial communities in comm.long with
+# the communities in comm.long3 that underwent change
+x1 <- comm.long[order(comm.long$species),]
+x2 <- comm.long2[order(comm.long2$species),]
+x1$year <- 1
+x2$year <- 2
+comm.long.all <- as_tibble(rbind(x1,x2))
+str(comm.long.all) #tibble [3,620 x 4]
+
+# Step 4: Calculate increments and decrements of changes
+# for all plot ID x species x time interval combinations 
+# Richness remains unchanged
+richness.t1 <- comm.long %>% group_by(no) %>%
+  summarise(richness=length(species))
+richness.t2 <- comm.long2 %>% group_by(no) %>%
+  summarise(richness=length(species))
+identical(richness.t1$richness, richness.t2$richness)
+#T
+
+# species.change.random holds all 
+# plot ID x species x time interval combinations  
+species.change.random <- data.frame(no=NULL,
+            from=NULL, to=NULL,species=NULL,
+            absolute.change=NULL)
+# Do the calculations by community
+for (i in 1:100){
+  print(i)
+  species.target.plot <- comm.long.all %>% filter(no %in% i) %>%
+      reshape2::acast(year ~ species, value.var="cover", fill=0)
+  species.target.plot <- species.target.plot[order(as.numeric(rownames(species.target.plot)),decreasing=T),,drop=F]
+  # reorder the plot records from the latest year being the first row
+  species.target.plot2 <- sweep(species.target.plot, 1, apply(species.target.plot,1,FUN=sum), FUN="/")
+  species.target.plot2 <- species.target.plot2[order(as.numeric(rownames(species.target.plot2)),decreasing=T),,drop=F]
+  n <- rownames(species.target.plot2)
+  
+  for (k in 1:(length(n)-1)){
+    diff.absolute.change <- species.target.plot[k,,drop=F] - species.target.plot[k+1,,drop=F]
+    diff.absolute.change[species.target.plot[k,]==0 & species.target.plot[k+1,]==0] <- NA
+    species.change.random <- rbind(species.change.random,data.frame(
+      no=i, from=as.numeric(n[k+1]),
+      to=as.numeric(n[k]),
+      species=dimnames(diff.absolute.change)[[2]],
+      absolute.change=as.numeric(diff.absolute.change)))
+  }
+}
+
+dim(species.change.random) #   1995      5
+
+# Step 5: Calculate all increments and decrements 
+# and the Gini coefficient, independent of species
+# as needed for Fig. 3a, c, e
+length(unique(species.change.random$species)) #200
+# turn the data.frame into a data.table, also needed for Step 6
+species.change.random <- data.table(species.change.random)
+setkey(species.change.random,species)
+species.change.random 
+
+species.change.random.neg <- species.change.random[absolute.change<0,]
+species.change.random.neg <- species.change.random.neg[order(species.change.random.neg$absolute.change, decreasing = T),]
+dim(species.change.random.neg) [[1]] # 364
+# calculate the Gini coefficient
+Gini(x = abs(species.change.random.neg$absolute.change),conf.level=0.95, R=1000, 
+     type="perc", unbiased=T)
+'      gini    lwr.ci    upr.ci 
+0.5689913 0.5140255 0.6208921  '
+species.change.random.pos <- species.change.random[absolute.change>0,]
+species.change.random.pos <- species.change.random.pos[order(species.change.random.pos$absolute.change, decreasing = F),]
+dim(species.change.random.pos) [[1]] # 364
+# calculate the Gini coefficient
+Gini(x = abs(species.change.random.pos$absolute.change),conf.level=0.95, R=1000, 
+     type="perc", unbiased=T) 
+'     gini    lwr.ci    upr.ci 
+0.5689913 0.5128940 0.6198023 '
+
+# function for the Lorenz curve
+Lorenz_curve <- function(input){
+  neg.input <- input[input<0]
+  pos.input <- input[input>0]
+  neg.input <- neg.input[order(neg.input, decreasing = T)]
+  pos.input <- pos.input[order(pos.input, decreasing = F)]
+  neg.curve <- array(0,c(length(neg.input),2), 
+                     dimnames= list(seq(1,length(neg.input)), c("n","mean.change")))
+  for (i in 1:length(neg.input)){
+    if (i==1){
+      neg.curve[i,1] <- 1
+      neg.curve[i,2] <- abs(neg.input[i])
+    } else {
+      neg.curve[i,1] <- neg.curve[i-1,1] + 1
+      neg.curve[i,2] <- neg.curve[i-1,2] + abs(neg.input[i])
+    }
+  }
+  neg.curve[,1] <- neg.curve[,1]/neg.curve[length(neg.input),1] 
+  neg.curve[,2] <- neg.curve[,2]/neg.curve[length(neg.input),2] 
+  
+  pos.curve <- array(0,c(length(pos.input),2), 
+                     dimnames= list(seq(1,length(pos.input)), c("n","mean.change")))
+  for (i in 1:length(pos.input)){
+    if (i==1){
+      pos.curve[i,1] <- 1
+      pos.curve[i,2] <- abs(pos.input[i])
+    } else {
+      pos.curve[i,1] <- pos.curve[i-1,1] + 1
+      pos.curve[i,2] <- pos.curve[i-1,2] + abs(pos.input[i])
+    }
+  }
+  pos.curve[,1] <- pos.curve[,1]/pos.curve[length(pos.input),1] 
+  pos.curve[,2] <- pos.curve[,2]/pos.curve[length(pos.input),2] 
+  return(list(neg=neg.curve, pos=pos.curve))
+}
+
+# produce the object used to plot the Lorenz curve
+res <- Lorenz_curve(species.change.random$absolute.change)
+str(res)
+
+plot(res$neg[,2] ~ res$neg[,1], type="n", xlab="Proportion of observations", 
+     ylab="Proportion of observed absolute changes")
+lines(res$neg[,2] ~ res$neg[,1], col="red")
+lines(res$pos[,2] ~ res$pos[,1], col="blue")
+lines(c(0,1),c(0,1))
+legend("topleft", bty="n", cex=1,
+       lty=1, lwd=2, col=c("red","blue"), 
+       legend=c("Negative change observations","Positive change observations"))
+
+
+# Step 6: Aggregate all increments and decrements by species 
+# using the aggregation function from data.table
+# Note: the data.table command also calculates p values for the departure
+# of the binomial distribution, as done in the manuscript, which
+# however, are not used in these null models
+change.random <- species.change.random[,{n_pos <- length(absolute.change[absolute.change>0]);
+     n_neg <- length(absolute.change[absolute.change<0]);
+     n_all <- ifelse(n_pos+n_neg>0,n_pos+n_neg,1);
+     est <- binom.test(n_pos,n_all);
+  list(n=length(absolute.change),
+     pos=length(absolute.change[absolute.change>0]),
+     equal=length(absolute.change[absolute.change==0]), neg=length(absolute.change[absolute.change<0]),
+     est.binom=est$estimate,
+     conf.binom.minus=est$conf.int[1],
+     conf.binom.plus=est$conf.int[2],
+     p.values.binom=est$p.value,
+     mean.absolute.change=mean(absolute.change, na.rm=T))}, by=species]
+
+# Calculate the Gini coefficients 
+change.random <- change.random[order(change.random$mean.absolute.change, decreasing = T),]
+change.neg <- change.random[mean.absolute.change<0,]
+dim(change.neg) [[1]] # 81
+Gini(x = abs(change.neg$mean.absolute.change),conf.level=0.95, R=1000, 
+     type="perc", unbiased=T) 
+'     gini    lwr.ci    upr.ci 
+0.5876498 0.4749597 0.6584458 '
+change.random <- change.random[order(change.random$mean.absolute.change, decreasing = F),]
+change.pos <- change.random[mean.absolute.change>0,]
+dim(change.pos) [[1]] # 94
+Gini(x = abs(change.pos$mean.absolute.change),conf.level=0.95, R=1000, 
+     type="perc", unbiased=T) 
+'     gini    lwr.ci    upr.ci 
+0.5691729 0.4982569 0.6242749  '
+
+dim(change.random[mean.absolute.change==0,]) [[1]] #28
+sum(change.neg$n) #  1005
+sum(change.pos$n) # 933
+
+# Produce the Lorenz curves by  
+# calculating the cumulative number of decreasing species 
+# and and their cumulative mean changes
+# separately for decreasing and increasing species
+decr <- array(0,c(dim(change.neg)[[1]],2), dimnames= list(change.neg$species, c("n","mean.slope")))
+for (i in 1:(dim(change.neg)[[1]])){
+  if (i==1){
+    decr[i,1] <- 1 
+    decr[i,2] <- abs(change.neg$mean.absolute.change[i]) 
+  } else {
+    decr[i,1] <- decr[i-1,1] + 1 
+    decr[i,2] <- decr[i-1,2] + abs(change.neg$mean.absolute.change[i]) 
+  }
+}
+decr[dim(change.neg)[[1]],1] # 81
+decr[dim(change.neg)[[1]],2] # 1.195169
+# number of decreasing species and the species' mean changes are scaled to 1, 
+# using the last data line for cumulative species number and cumulated changes
+decr[,1] <- decr[,1]/decr[dim(change.neg)[[1]],1]
+decr[,2] <- decr[,2]/decr[dim(change.neg)[[1]],2]
+
+# calculate cumulative number of increasing species 
+# and and their cumulative mean changes
+incr <- array(0,c(dim(change.pos)[[1]],2), dimnames= list(change.pos$species, c("n","mean.slope")))
+for (i in 1:(dim(change.pos)[[1]])){
+  if (i==1){
+    incr[i,1] <- 1 #change.pos$n[i]
+    incr[i,2] <- abs(change.pos$mean.absolute.change[i]) #*change.pos$n[i]
+  } else {
+    incr[i,1] <- incr[i-1,1] + 1 #change.pos$n[i]
+    incr[i,2] <- incr[i-1,2] + abs(change.pos$mean.absolute.change[i]) #*change.pos$n[i]
+  }
+}
+incr[dim(change.pos)[[1]],1] #91
+incr[dim(change.pos)[[1]],2] # 1.455861
+# number of increasing species and the species' mean changes are scaled to 1, 
+# using the last data line for cumulative species number and cumulated changes
+incr[,1] <- incr[,1]/incr[dim(change.pos)[[1]],1]
+incr[,2] <- incr[,2]/incr[dim(change.pos)[[1]],2]
+
+# Plot the Lorenz curve
+# Fig. 3b, d, f
+plot(decr[,2] ~ decr[,1], type="n", xlab="Proportion of species", 
+     ylab="Proportion of observed absolute changes")
+lines(decr[,2] ~ decr[,1], col="red")
+lines(incr[,2] ~ incr[,1], col="blue")
+lines(c(0,1),c(0,1))
+
+legend("topleft", bty="n", cex=1,
+       lty=1, lwd=1, col=c("red","blue"), 
+       legend=c("Species with negative mean change", 
+                "Species with positive mean change"))
+
+
