@@ -80,7 +80,6 @@ for(i in 1:200){
   index2 <- match(x, comm.richness2$no)
   comm.richness2$richness[index2] <- comm.richness2$richness[index2] - 1 
   comm.richness2 <- comm.richness2[comm.richness2$richness!=0,]
-  
 }
 sort(table(comm.long$species))
 # species frequencies are between 1 and 100, corresponging to spec.pool
@@ -159,7 +158,7 @@ count.decrease <- 0
 count.increase <- 0
 
 for(i in 1:100){
-  # lopp to change plot by plot
+  # loop to change plot by plot
   # determine the number of species that undergo change
   n.change <- nrow(comm.long[comm.long$no==i,]) * prop.change
   # turn this into an even number to allow that half of the species
@@ -219,7 +218,7 @@ for(i in 1:100){
     }
   }
   
-  # number of declinging species
+  # number of declining species
   no.species.dec <- nrow(x.dec)
   # number of increasing species
   no.species.inc <- nrow(x)- no.species.dec
@@ -244,7 +243,7 @@ for(i in 1:100){
   decr <- sum(x.dec$cover)
   if(length(x.dec$cover)>1){
     # decreases are distributed according to a geometric model
-    # as a reasult decr holds decreases in descending values
+    # as a result decr holds decreases in descending values
     decr <- decr/2^seq(1,length(x.dec$cover)-1,by=1)
     decr <- c(decr,decr[length(decr)])
   }
@@ -293,7 +292,7 @@ for(i in 1:100){
     incr2 <- sum(incr)
   }
   # If number of decreasing and increasing species is not the same and 
-  # if there is more than one increasing or colonizing spcies,
+  # if there is more than one increasing or colonizing species,
   # the increments are redistributed
   if(no.species.inc+no.species.ext != no.species.dec & no.species.inc+no.species.ext !=1){
     # If the number of decreasing species is larger than that of increasing species
@@ -329,8 +328,11 @@ for(i in 1:100){
     x.inc3 <- x.inc %>%
       slice_sample(n=no.species.inc)
   } else {
-    x.inc3 <- x.inc %>%
-      slice_sample(n=0)
+    ## FMS changed -- broken in my version of dplyr
+    #x.inc3 <- x.inc %>%
+    #  slice_sample(n=0)
+    x.inc3 <- x.inc[0,]
+    ## end of FMS change
   }
   set.seed(i+5000)
   incr2 <- sample(incr2)
@@ -390,6 +392,7 @@ species.change.random <- data.frame(no=NULL,
             from=NULL, to=NULL,species=NULL,
             absolute.change=NULL)
 # Do the calculations by community
+## FMS some more comments could be useful here
 for (i in 1:100){
   print(i)
   species.target.plot <- comm.long.all %>% filter(no %in% i) %>%
@@ -426,7 +429,7 @@ species.change.random.neg <- species.change.random[absolute.change<0,]
 species.change.random.neg <- species.change.random.neg[order(species.change.random.neg$absolute.change, decreasing = T),]
 dim(species.change.random.neg) [[1]] # 364
 # calculate the Gini coefficient
-Gini(x = abs(species.change.random.neg$absolute.change),conf.level=0.95, R=1000, 
+DescTools::Gini(x = abs(species.change.random.neg$absolute.change),conf.level=0.95, R=1000, 
      type="perc", unbiased=T)
 '      gini    lwr.ci    upr.ci 
 0.5689913 0.5140255 0.6208921  '
@@ -434,7 +437,7 @@ species.change.random.pos <- species.change.random[absolute.change>0,]
 species.change.random.pos <- species.change.random.pos[order(species.change.random.pos$absolute.change, decreasing = F),]
 dim(species.change.random.pos) [[1]] # 364
 # calculate the Gini coefficient
-Gini(x = abs(species.change.random.pos$absolute.change),conf.level=0.95, R=1000, 
+DescTools::Gini(x = abs(species.change.random.pos$absolute.change),conf.level=0.95, R=1000, 
      type="perc", unbiased=T) 
 '     gini    lwr.ci    upr.ci 
 0.5689913 0.5128940 0.6198023 '
@@ -513,14 +516,14 @@ change.random <- species.change.random[,{n_pos <- length(absolute.change[absolut
 change.random <- change.random[order(change.random$mean.absolute.change, decreasing = T),]
 change.neg <- change.random[mean.absolute.change<0,]
 dim(change.neg) [[1]] # 81
-Gini(x = abs(change.neg$mean.absolute.change),conf.level=0.95, R=1000, 
+DescTools::Gini(x = abs(change.neg$mean.absolute.change),conf.level=0.95, R=1000, 
      type="perc", unbiased=T) 
 '     gini    lwr.ci    upr.ci 
 0.5876498 0.4749597 0.6584458 '
 change.random <- change.random[order(change.random$mean.absolute.change, decreasing = F),]
 change.pos <- change.random[mean.absolute.change>0,]
 dim(change.pos) [[1]] # 94
-Gini(x = abs(change.pos$mean.absolute.change),conf.level=0.95, R=1000, 
+DescTools::Gini(x = abs(change.pos$mean.absolute.change),conf.level=0.95, R=1000, 
      type="perc", unbiased=T) 
 '     gini    lwr.ci    upr.ci 
 0.5691729 0.4982569 0.6242749  '
