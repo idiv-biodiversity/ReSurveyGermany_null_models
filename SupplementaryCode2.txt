@@ -10,7 +10,7 @@
 # one century in Germany: more losers than winners. 
 # Nature 
 #
-# Author: Helge Bruelheide, 26.02.2022
+# Author: Helge Bruelheide, 23.05.2022
 library(tidyverse)  # for using dplyr and piping
 library(DescTools)  # Gini coefficient
 library(data.table) # for aggregating data
@@ -131,21 +131,21 @@ comm.richness <- as_tibble(comm.richness)
 # Scenario 1: Varying the proportion of species affected by cover change 
 # in a community (to simulate different turnover in community composition)
 prop.change <- 0.4
-# (Fig. 3a and b were created with prop.change = 0.4 and 0.8)
+# (Fig. 3a and d were created with prop.change = 0.4 and 0.8)
 
 # Scenario 2: Varying the proportion of increasing species among those 
 # species affected by change (to simulate differences in the distribution 
 # of losses and gains, irrespective of species)
 prop.increase <- 0.5
-# (Fig. 3a and b were created with prop.increase 0.5
-#  Fig. 3c and d were created with prop.increase = 0.2 and 0.8)
+# (Fig. 3a and d were created with prop.increase 0.5
+#  Fig. 3b and e were created with prop.increase = 0.2 and 0.8)
 
 # Scenario 3: Varying the identity of the species to decrease in cover 
 # (to simulate that losses and gains might be concentrated in certain species)
 decrease_selection_weighted <- 0
-# (Fig. 3a, b, c and d were created with decrease_selection_weighted = 0, 
+# (Fig. 3a, b, d and e were created with decrease_selection_weighted = 0, 
 #  i.e. no weight,
-#  Fig. 3e and f were created with decrease_selection_weighted = 1,
+#  Fig. 3c and f were created with decrease_selection_weighted = 1,
 #  i.e. letting species decrease according to the species ID, which 
 #  resulted in species with higher ID values being more 
 #  frequently selected for losing cover than other species.
@@ -328,11 +328,7 @@ for(i in 1:100){
     x.inc3 <- x.inc %>%
       slice_sample(n=no.species.inc)
   } else {
-    ## FMS changed -- broken in my version of dplyr
-    #x.inc3 <- x.inc %>%
-    #  slice_sample(n=0)
     x.inc3 <- x.inc[0,]
-    ## end of FMS change
   }
   set.seed(i+5000)
   incr2 <- sample(incr2)
@@ -384,15 +380,16 @@ richness.t1 <- comm.long %>% group_by(no) %>%
 richness.t2 <- comm.long2 %>% group_by(no) %>%
   summarise(richness=length(species))
 identical(richness.t1$richness, richness.t2$richness)
-#T
+#T, i.e. richness has not changed
 
 # species.change.random holds all 
 # plot ID x species x time interval combinations  
 species.change.random <- data.frame(no=NULL,
             from=NULL, to=NULL,species=NULL,
             absolute.change=NULL)
-# Do the calculations by community
-## FMS some more comments could be useful here
+# Increments and decrements are calculated for every species
+# in every interval, these calculations are done by community
+# i.e. from 1 to 100
 for (i in 1:100){
   print(i)
   species.target.plot <- comm.long.all %>% filter(no %in% i) %>%
@@ -418,7 +415,7 @@ dim(species.change.random) #   1995      5
 
 # Step 5: Calculate all increments and decrements 
 # and the Gini coefficient, independent of species
-# as needed for Fig. 3a, c, e
+# as needed for Fig. 3a, b, c
 length(unique(species.change.random$species)) #200
 # turn the data.frame into a data.table, also needed for Step 6
 species.change.random <- data.table(species.change.random)
@@ -573,7 +570,7 @@ incr[,1] <- incr[,1]/incr[dim(change.pos)[[1]],1]
 incr[,2] <- incr[,2]/incr[dim(change.pos)[[1]],2]
 
 # Plot the Lorenz curve
-# Fig. 3b, d, f
+# Fig. 3d, e, f
 plot(decr[,2] ~ decr[,1], type="n", xlab="Proportion of species", 
      ylab="Proportion of observed absolute changes")
 lines(decr[,2] ~ decr[,1], col="red")
@@ -582,7 +579,7 @@ lines(c(0,1),c(0,1))
 
 legend("topleft", bty="n", cex=1,
        lty=1, lwd=1, col=c("red","blue"), 
-       legend=c("Species with negative mean change", 
-                "Species with positive mean change"))
+       legend=c("Losers", 
+                "Winners"))
 
 
